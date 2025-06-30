@@ -74,7 +74,7 @@ func CreateCiliumCRS(ctx context.Context, c client.Client, instance *clv1alpha2.
 
 	content, err := os.ReadFile(yamlPath)
 	if err != nil {
-		return fmt.Errorf("Cannot get Cilium YAML 文件: %w", err)
+		return fmt.Errorf("Cannot get Cilium YAML: %w", err)
 	}
 
 	secret := &corev1.Secret{
