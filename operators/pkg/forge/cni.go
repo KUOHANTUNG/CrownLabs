@@ -16,32 +16,38 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func insertKubeConfig(instance *clv1alpha2.Instance, environment *clv1alpha2.Environment, host string) error {
-
-	cluster := environment.Cluster
+func insertKubeConfig(instance *clv1alpha2.Instance, clusterName, host string, port int) error {
 	path := fmt.Sprintf("./kubeconfigs/%s-instance.kubeconfig", instance.Name)
 
 	cmd := exec.Command(
-		"clusterctl", "get", "kubeconfig", fmt.Sprintf("%s-cluster", cluster.Name),
+		"clusterctl", "get", "kubeconfig", fmt.Sprintf("%s-cluster", clusterName),
 		"--namespace", instance.Namespace,
 	)
 
-	raw, _ := cmd.Output()
+	raw, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("failed to get kubeconfig: %w", err)
+	}
 
-	cfg, _ := clientcmd.Load(raw)
+	cfg, err := clientcmd.Load(raw)
+	if err != nil {
+		return fmt.Errorf("failed to load kubeconfig: %w", err)
+	}
 
-	newURL := fmt.Sprintf("https://%s:%d",
-		host, environment.Cluster.ClusterNet.NginxPort)
-
+	newURL := fmt.Sprintf("https://%s:%d", host, port)
 	for _, c := range cfg.Clusters {
 		c.Server = newURL
 	}
 
-	updated, _ := clientcmd.Write(*cfg)
+	updated, err := clientcmd.Write(*cfg)
+	if err != nil {
+		return fmt.Errorf("failed to write kubeconfig: %w", err)
+	}
 
 	return os.WriteFile(path, updated, 0o600)
-
 }
+
+
 
 func DownloadCiliumYAML(localPath string) error {
 	url := "https://raw.githubusercontent.com/cilium/cilium/v1.17.5/install/kubernetes/cilium.yaml"
@@ -67,14 +73,10 @@ func DownloadCiliumYAML(localPath string) error {
 	return nil
 }
 
-func CreateCiliumCRS(ctx context.Context, c client.Client, instance *clv1alpha2.Instance, environment *clv1alpha2.Environment, yamlPath string) error {
-	cluster := environment.Cluster
-	namespace := instance.Namespace
-	clusterName := cluster.Name
-
+func CreateCiliumCRS(ctx context.Context, c client.Client, instance *clv1alpha2.Instance, clusterName, namespace, yamlPath string) error {
 	content, err := os.ReadFile(yamlPath)
 	if err != nil {
-		return fmt.Errorf("Cannot get Cilium YAML: %w", err)
+		return fmt.Errorf("cannot read Cilium YAML file: %w", err)
 	}
 
 	secret := &corev1.Secret{
@@ -91,7 +93,7 @@ func CreateCiliumCRS(ctx context.Context, c client.Client, instance *clv1alpha2.
 	}
 
 	if err := c.Create(ctx, secret); err != nil {
-		return fmt.Errorf("Failed to get Secret: %w", err)
+		return fmt.Errorf("failed to create Secret: %w", err)
 	}
 
 	crs := &addonsv1.ClusterResourceSet{
@@ -111,13 +113,14 @@ func CreateCiliumCRS(ctx context.Context, c client.Client, instance *clv1alpha2.
 					Kind: "Secret",
 				},
 			},
-			Strategy: addonsv1.ClusterResourceSetStrategyApplyOnce,
+			Strategy: "ApplyOnce",
 		},
 	}
 
 	if err := c.Create(ctx, crs); err != nil {
-		return fmt.Errorf("Failed to create CRS: %w", err)
+		return fmt.Errorf("failed to create ClusterResourceSet: %w", err)
 	}
 
 	return nil
 }
+
